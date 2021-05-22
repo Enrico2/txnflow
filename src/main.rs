@@ -5,21 +5,18 @@ use futures::executor::block_on;
 use txnflow::{run_txn_processor, TxnFlowError};
 
 fn main() {
+    env_logger::init();
+
     let mut args: Vec<String> = env::args().collect();
+
+    // expect a single argument on top of the executable
     if args.len() != 2 {
-        eprintln!("{}", TxnFlowError::InvalidArguments)
+        panic!("{}", TxnFlowError::InvalidArguments)
     }
 
-    let filename = args.pop().expect("Validated length is 2");
+    let filename = args.pop().expect("args must be non empty");
 
     if let Err(e) = block_on(run_txn_processor(filename, &mut io::stdout())) {
-        eprintln!("{}", e);
+        panic!("{}", e);
     }
 }
-
-// TODO(ran) FIXME: 4 precision floats: https://stackoverflow.com/questions/39383809/how-to-transform-fields-during-serialization-using-serde
-// TODO(ran) FIXME: log ignore and failure cases
-// TODO(ran) FIXME: add docstrings
-// TODO(ran) FIXME: Run clippy
-// TODO(ran) FIXME: get more test coverage
-// TODO(ran) FIXME: run coverage in github?

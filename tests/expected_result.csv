@@ -1,3 +1,12 @@
-client,   available,    held,     total,    locked
-1,        1.5,           0.0,      1.5,      false
-2,        2.0,           0.0,      2.0,      false
+client,   available,    held,   total,      locked
+1,        0.5,          1.0,    1.5,        false
+2,        2.0,          0.0,    2.0,        false
+3,        1.8888,       0.0,    1.8888,     false
+4,        2.5,          1.5,    4.0,        false
+5,        -2.0,         10.0,   8.0,        false
+6,        2.5,          0.0,    2.5,        false
+7,        8.0,          0.0,    8.0,        false
+8,        2.5,          0.0,    2.5,        true
+9,        -2.0,         0.0,    -2.0,       true
+10,       1.0,          0.0,    1.0,        false
+99,       0.0,          0.0,    0.0,        false

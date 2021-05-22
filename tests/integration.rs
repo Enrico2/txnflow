@@ -5,7 +5,7 @@ use predicates::prelude::*;
 use txnflow::OutputAccount;
 
 #[test]
-fn integration_test() {
+fn main_test() {
     let mut cmd = Command::cargo_bin("txnflow").unwrap();
     let result = cmd.arg("tests/test_data.csv").assert();
 
@@ -32,4 +32,19 @@ fn integration_test() {
         expected.sort_by(|a, b| a.client.cmp(&b.client));
         actual == expected
     }));
+}
+
+#[test]
+fn test_no_arguments() {
+    Command::cargo_bin("txnflow").unwrap().assert().failure();
+}
+
+#[test]
+fn test_too_many_arguments() {
+    Command::cargo_bin("txnflow")
+        .unwrap()
+        .arg("tests/test_data.csv")
+        .arg("something_else")
+        .assert()
+        .failure();
 }

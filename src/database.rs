@@ -8,13 +8,10 @@ use crate::{Result, Txn, TxnFlowError, TxnType};
 
 #[async_trait]
 pub(crate) trait TxnStore {
-    // TODO(ran) FIXME: use Result object? Or is Future enough.
     async fn get_txn(&self, id: u32) -> Option<&StoredTxn>;
     async fn get_txn_mut(&mut self, id: u32) -> Option<&mut StoredTxn>;
 
-    // NB: In a prod system where this trait can be implemented with network calls,
-    // the return type would be a Result
-    async fn store_txn(&mut self, txn: &Txn) -> ();
+    async fn store_txn(&mut self, txn: &Txn) -> Result<()>;
 }
 
 #[async_trait]
@@ -22,6 +19,9 @@ pub(crate) trait AccountsStore {
     async fn get_or_create_account(&mut self, id: u16) -> &mut UserAccount;
 }
 
+/////////////////////////////////////////////////
+// In memory implementations of the Store traits
+/////////////////////////////////////////////////
 pub(crate) struct MemTxnStore {
     txns: HashMap<u32, StoredTxn>,
 }
@@ -32,6 +32,7 @@ pub(crate) enum StoredTxnType {
 }
 
 pub(crate) struct StoredTxn {
+    pub(crate) client: u16,
     pub(crate) kind: StoredTxnType,
     pub(crate) amount: f32,
     pub(crate) disputed: bool,
@@ -56,16 +57,15 @@ impl TxnStore for MemTxnStore {
     }
 
     // This is called once per transaction and they're assumed unique.
-    async fn store_txn(&mut self, txn: &Txn) -> () {
+    async fn store_txn(&mut self, txn: &Txn) -> Result<()> {
         match &txn.kind {
             TxnType::Deposit => {
                 self.txns.insert(
                     txn.id,
                     StoredTxn {
+                        client: txn.client,
                         kind: StoredTxnType::Deposit,
-                        amount: txn
-                            .amount
-                            .expect("`deposit` transaction must contain `amount`"),
+                        amount: txn.amount.ok_or(TxnFlowError::InvalidDepositTransaction)?,
                         disputed: false,
                     },
                 );
@@ -74,16 +74,18 @@ impl TxnStore for MemTxnStore {
                 self.txns.insert(
                     txn.id,
                     StoredTxn {
+                        client: txn.client,
                         kind: StoredTxnType::Withdrawal,
                         amount: txn
                             .amount
-                            .expect("`withdrawal` transaction must contain `amount`"),
+                            .ok_or(TxnFlowError::InvalidWithdrawalTransaction)?,
                         disputed: false,
                     },
                 );
             }
             _ => (),
-        }
+        };
+        Ok(())
     }
 }
 
@@ -122,5 +124,3 @@ impl AccountsStore for MemAccountsStore {
         self.accounts.entry(id).or_insert_with(UserAccount::new)
     }
 }
-
-// TODO(ran) FIXME: test this.

@@ -14,11 +14,9 @@ use crate::transactions::TxnManager;
 
 mod accounts;
 mod database;
-mod logger;
-mod streaming;
 mod transactions;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum TxnType {
     Deposit,
@@ -55,8 +53,11 @@ pub enum TxnFlowError {
     #[error("Transaction not found: {0}")]
     InvalidTransactionRef(u32),
 
-    #[error("Referenced an invalid transaction (either not under dispute or not found)")]
+    #[error("Referenced a transaction that is not under dispute")]
     TransactionNotDisputed,
+
+    #[error("Disputing a transaction that is already under dispute")]
+    TransactionAlreadyDisputed,
 
     #[error("Attempted transaction on a locked account")]
     LockedAccount,
@@ -67,23 +68,17 @@ pub enum TxnFlowError {
     #[error("Failed reading {0}")]
     IOException(String),
 
-    // TODO(ran) FIXME: get the bad record.
     #[error("Failed deserializing record in csv")]
     DeserializationException,
 
-    // TODO(ran) FIXME: get the bad record.
-    #[error("Failed deserializing record in csv")]
+    #[error("Failed serializing record to csv")]
     SerializationException,
-
-    #[error("Internal unknown error")]
-    Unknown,
 }
 
 type Result<T> = std::result::Result<T, TxnFlowError>;
 
-// TODO(ran) FIXME: review all "expect/unwrap" calls
-// TODO(ran) FIXME: change filename to take stream
 pub async fn run_txn_processor<W: io::Write>(filename: String, writer: &mut W) -> Result<()> {
+    // Initialize stores and manager
     let mut txn_store = MemTxnStore::new();
     let mut account_store = MemAccountsStore::new();
 
@@ -92,6 +87,7 @@ pub async fn run_txn_processor<W: io::Write>(filename: String, writer: &mut W) -
         account_store: &mut account_store,
     };
 
+    // Initialize csv reader
     let mut reader = csv::ReaderBuilder::new()
         .trim(Trim::All)
         .from_path(Path::new(&filename))
@@ -103,28 +99,44 @@ pub async fn run_txn_processor<W: io::Write>(filename: String, writer: &mut W) -
     let (mut txn_sender, mut txn_receiver) = mpsc::unbounded::<Txn>();
 
     for record in reader.deserialize() {
+        // Should this be a transient error or not?
+        // chose to fail completely but in a prod system, will only fail the request.
         let txn: Txn = record.map_err(|_| TxnFlowError::DeserializationException)?;
-        let _ = txn_sender
-            .send(txn)
-            .await
-            .map_err(|_| TxnFlowError::Unknown);
+
+        if let Err(e) = txn_sender.send(txn).await {
+            log::error!("Failed sending transaction to channel: {}", e)
+        }
     }
+
+    // closes the sender and causes the receiver to get a None once it's done getting all messages.
     drop(txn_sender);
 
+    // Asynchronously process the transactions channel
     let runner = async move {
         while let Some(txn) = txn_receiver.next().await {
-            let result = txn_manager.process(txn).await;
-            if let Err(e) = result {
-                eprintln!("{}", e);
+            if let Err(e) = txn_manager.process(txn).await {
+                log_error(e)
             }
         }
     };
 
+    // Await the async process
     runner.await;
 
+    // Dump the account store to the given writer
     account_store.dump_to_csv(writer)?;
 
     Ok(())
+}
+
+fn log_error(e: TxnFlowError) {
+    match e {
+        TxnFlowError::InsufficientFunds
+        | TxnFlowError::InvalidWithdrawalTransaction
+        | TxnFlowError::InvalidDepositTransaction => log::error!("{}", e),
+        TxnFlowError::LockedAccount => log::error!("{}", e),
+        _ => log::warn!("{}", e),
+    }
 }
 
 #[cfg(test)]

@@ -8,31 +8,41 @@ pub(crate) struct TxnManager<'a> {
 
 impl<'a> TxnManager<'a> {
     pub async fn process(&mut self, txn: Txn) -> Result<()> {
-        let txn_id = txn.id;
-        let (_, account) = futures::future::join(
+        // Store the transaction and fetch the user account in parallel
+        let (store_txn_result, account) = futures::future::join(
             self.txn_store.store_txn(&txn),
             self.account_store.get_or_create_account(txn.client),
         )
         .await;
 
+        // don't process transaction that failed storage.
+        let _ = store_txn_result?;
+
         match &txn.kind {
             TxnType::Deposit => account.process_deposit(txn),
+
             TxnType::Withdrawal => account.process_withdrawal(txn),
-            TxnType::Dispute => {
-                if let Some(ref_txn) = self.txn_store.get_txn_mut(txn_id).await {
+
+            TxnType::Dispute => match self.txn_store.get_txn_mut(txn.id).await {
+                // ensure the referenced txn exists and that it belongs to the client.
+                Some(ref_txn) if ref_txn.client == txn.client => {
                     if !ref_txn.disputed {
-                        ref_txn.disputed = true;
-                        account.process_dispute(ref_txn)
+                        let result = account.process_dispute(ref_txn);
+                        if result.is_ok() {
+                            ref_txn.disputed = true;
+                        }
+                        result
                     } else {
-                        Err(TxnFlowError::TransactionNotDisputed)
+                        Err(TxnFlowError::TransactionAlreadyDisputed)
                     }
-                } else {
-                    Err(TxnFlowError::InvalidTransactionRef(txn_id))
                 }
-            }
-            TxnType::Resolve => {
-                if let Some(ref_txn) = self.txn_store.get_txn_mut(txn_id).await {
-                    if !ref_txn.disputed {
+                _ => Err(TxnFlowError::InvalidTransactionRef(txn.id)),
+            },
+
+            TxnType::Resolve => match self.txn_store.get_txn_mut(txn.id).await {
+                // ensure the referenced txn exists and that it belongs to the client.
+                Some(ref_txn) if ref_txn.client == txn.client => {
+                    if ref_txn.disputed {
                         let result = account.process_resolve(ref_txn);
                         if result.is_ok() {
                             ref_txn.disputed = false
@@ -41,23 +51,20 @@ impl<'a> TxnManager<'a> {
                     } else {
                         Err(TxnFlowError::TransactionNotDisputed)
                     }
-                } else {
-                    Err(TxnFlowError::InvalidTransactionRef(txn_id))
                 }
-            }
-            TxnType::Chargeback => {
-                if let Some(ref_txn) = self.txn_store.get_txn(txn_id).await {
-                    if !ref_txn.disputed {
+                _ => Err(TxnFlowError::InvalidTransactionRef(txn.id)),
+            },
+
+            TxnType::Chargeback => match self.txn_store.get_txn(txn.id).await {
+                Some(ref_txn) if ref_txn.client == txn.client => {
+                    if ref_txn.disputed {
                         account.process_chargeback(ref_txn)
                     } else {
                         Err(TxnFlowError::TransactionNotDisputed)
                     }
-                } else {
-                    Err(TxnFlowError::InvalidTransactionRef(txn_id))
                 }
-            }
+                _ => Err(TxnFlowError::InvalidTransactionRef(txn.id)),
+            },
         }
     }
 }
-
-// TODO(ran) FIXME: test this.
