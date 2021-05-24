@@ -38,7 +38,7 @@ In a prod system, I would imagine a message bus partitioned by `client` where th
 consumer would be processing transactions serially. This will achieve parallel stream computation while preserving the invariant that transaction ordering
 matters per client.
 
-![](txnflow.png)
+![](prod_arch.png)
 
 As for the Rust code itself, I would change the code in `lib.rs` to take a stream of csv records to deserialize as an argument rather than a file name. Then the
 same code could be used as a processor in a server that deserializes a stream of requests.
